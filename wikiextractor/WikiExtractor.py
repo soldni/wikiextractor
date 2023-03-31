@@ -43,8 +43,8 @@ Each file will contain several documents in the format:
         ...
         </doc>
 
-If the program is invoked with the --json flag, then each file will                                            
-contain several documents formatted as json ojects, one per line, with                                         
+If the program is invoked with the --json flag, then each file will
+contain several documents formatted as json ojects, one per line, with
 the following structure
 
     {"id": "", "revid": "", "url": "", "title": "", "text": "..."}
@@ -55,6 +55,8 @@ collecting template definitions.
 
 import argparse
 import bz2
+import datetime
+import gzip
 import logging
 import os.path
 import re  # TODO use regex when it will be standard
@@ -168,19 +170,29 @@ class OutputSplitter():
 
     def write(self, data):
         self.reserve(len(data))
-        if self.compress:
-            self.file.write(data)
-        else:
-            self.file.write(data)
+        # if self.compress:
+        #     if isinstance(data, str):
+        #         data = data.encode('utf-8')
+        #     self.file.write(data)
+        # else:
+        self.file.write(data)
 
     def close(self):
+        fn = self.file.name
         self.file.close()
 
-    def open(self, filename):
         if self.compress:
-            return bz2.BZ2File(filename + '.bz2', 'w')
-        else:
-            return open(filename, 'w')
+            # compress after
+            with gzip.open(fn + '.gz', 'wb') as gz:
+                with open(fn, 'rb') as f:
+                    gz.writelines(f)
+            os.remove(fn)
+
+    def open(self, filename):
+        # if self.compress:
+        #     return bz2.BZ2File(filename + '.bz2', 'w')
+        # else:
+        return open(filename, 'w')
 
 
 # ----------------------------------------------------------------------
@@ -288,6 +300,7 @@ def collect_pages(text):
     id = ''
     revid = ''
     last_id = ''
+    ts = datetime.datetime.fromtimestamp(0)
     inText = False
     redirect = False
     for line in text:
@@ -306,6 +319,8 @@ def collect_pages(text):
             id = m.group(3)
         elif tag == 'id' and id: # <revision> <id></id> </revision>
             revid = m.group(3)
+        elif tag == 'timestamp':
+            ts = datetime.datetime.strptime(m.group(3), '%Y-%m-%dT%H:%M:%SZ')
         elif tag == 'title':
             title = m.group(3)
         elif tag == 'redirect':
@@ -326,7 +341,8 @@ def collect_pages(text):
             colon = title.find(':')
             if (colon < 0 or (title[:colon] in acceptedNamespaces) and id != last_id and
                     not redirect and not title.startswith(templateNamespace)):
-                yield (id, revid, title, page)
+                ts_formatted = ts.strftime('%Y-%m-%dT%H:%M:%S.%f')[:23] + 'Z'
+                yield (id, revid, title, page, ts_formatted)
                 last_id = id
             id = ''
             revid = ''
@@ -443,8 +459,8 @@ def process_dump(input_file, template_file, out_file, file_size, file_compress,
     # than concatenation
 
     ordinal = 0  # page count
-    for id, revid, title, page in collect_pages(input):
-        job = (id, revid, urlbase, title, page, ordinal)
+    for id, revid, title, page, timestamp in collect_pages(input):
+        job = (id, revid, urlbase, title, page, timestamp, ordinal)
         jobs_queue.put(job)  # goes to any available extract_process
         ordinal += 1
 

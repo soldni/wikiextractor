@@ -22,9 +22,11 @@ import re
 import html
 import json
 from itertools import zip_longest
+import unicodedata
 from urllib.parse import quote as urlencode
 from html.entities import name2codepoint
 import logging
+from datetime import datetime
 import time
 
 # ----------------------------------------------------------------------
@@ -58,6 +60,8 @@ discardElements = [
 # wikt: shortcut for Wiktionary
 #
 acceptedNamespaces = ['w', 'wiktionary', 'wikt']
+
+TIMESTAMP = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f')[:23] + 'Z'
 
 
 def get_url(urlbase, uid):
@@ -927,7 +931,7 @@ class Extractor():
     # Obtained from TemplateNamespace
     templatePrefix = ''
 
-    def __init__(self, id, revid, urlbase, title, page):
+    def __init__(self, id, revid, urlbase, title, page, timestamp):
         """
         :param page: a list of lines.
         """
@@ -936,6 +940,7 @@ class Extractor():
         self.url = get_url(urlbase, id)
         self.title = title
         self.page = page
+        self.timestamp = timestamp
         self.magicWords = MagicWords()
         self.frame = []
         self.recursion_exceeded_1_errs = 0  # template recursion within expandTemplates()
@@ -950,7 +955,7 @@ class Extractor():
           e.g. "## Section 1"
         """
         self.magicWords['namespace'] = self.title[:max(0, self.title.find(":"))]
-        #self.magicWords['namespacenumber'] = '0' # for article, 
+        #self.magicWords['namespacenumber'] = '0' # for article,
         self.magicWords['pagename'] = self.title
         self.magicWords['fullpagename'] = self.title
         self.magicWords['currentyear'] = time.strftime('%Y')
@@ -971,17 +976,31 @@ class Extractor():
         :param html_safe: whether to escape HTML entities.
         """
         logging.debug("%s\t%s", self.id, self.title)
-        text = ''.join(self.page)
-        text = self.clean_text(text, html_safe=html_safe)
+        body = ''.join(self.page)
+        body = self.clean_text(body, html_safe=html_safe)
+
+        if not body:
+            return
 
         if self.to_json:
+            title = unicodedata.normalize('NFC', self.title)
+            body = [unicodedata.normalize('NFC', sec) for sec in body]
+
             json_data = {
-		'id': self.id,
-                'revid': self.revid,
-                'url': self.url,
-                'title': self.title,
-                'text': "\n".join(text)
+                'id': str(self.id),
+                'source': 'wikipedia',
+                'version': 'v0',
+                'text': f"{title}\n\n" + "\n\n".join(body),
+                'created': self.timestamp,
+                'added': TIMESTAMP,
+                'metadata': {
+                    'revid': self.revid,
+                    'url': self.url,
+                    'title': title,
+                    'body': body,
+                }
             }
+
             out_str = json.dumps(json_data)
             out.write(out_str)
             out.write('\n')
@@ -991,7 +1010,7 @@ class Extractor():
             header += self.title + '\n\n'
             footer = "\n</doc>\n"
             out.write(header)
-            out.write('\n'.join(text))
+            out.write('\n'.join(body))
             out.write('\n')
             out.write(footer)
 
